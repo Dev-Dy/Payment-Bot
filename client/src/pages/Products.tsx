@@ -3,59 +3,75 @@ import { Button } from "@/components/ui/button";
 import { Plus, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { Product, InsertProduct } from "@shared/schema";
 
 export default function Products() {
   const [searchTerm, setSearchTerm] = useState("");
+  const { toast } = useToast();
   
-  // todo: remove mock functionality
-  const mockProducts = [
-    {
-      id: "prod_1",
-      name: "Premium Full-Stack Course",
-      description: "Complete full-stack development course with React, Node.js, and database design. Includes 50+ hours of video content and practical projects.",
-      price: "299.00",
-      currency: "USD",
-      imageUrl: undefined,
-      active: true,
-    },
-    {
-      id: "prod_2",
-      name: "JavaScript E-book Bundle",
-      description: "Collection of 5 comprehensive JavaScript books covering ES6+, async programming, testing, and performance optimization.",
-      price: "49.99",
-      currency: "USD",
-      imageUrl: undefined,
-      active: true,
-    },
-    {
-      id: "prod_3",
-      name: "React Video Series",
-      description: "15-part video series covering React hooks, context, testing, and advanced patterns. Perfect for intermediate developers.",
-      price: "79.99",
-      currency: "USD", 
-      imageUrl: undefined,
-      active: false,
-    },
-    {
-      id: "prod_4",
-      name: "One-on-One Mentorship",
-      description: "Personal 1-hour mentorship session with an experienced developer. Get code reviews and career advice.",
-      price: "150.00",
-      currency: "USD",
-      imageUrl: undefined,
-      active: true,
-    }
-  ];
+  // Fetch products from API
+  const { data: products = [], isLoading, error } = useQuery<Product[]>({
+    queryKey: ['/api/products'],
+  });
 
-  const filteredProducts = mockProducts.filter(product =>
+  const filteredProducts = products.filter(product =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     product.description.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleEdit = (id: string) => console.log('Edit product:', id);
-  const handleToggleStatus = (id: string) => console.log('Toggle status:', id);
-  const handleDelete = (id: string) => console.log('Delete product:', id);
-  const handleAddProduct = () => console.log('Add new product');
+  // Mutation for updating products
+  const updateProductMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: string; updates: Partial<InsertProduct> }) => {
+      return apiRequest('PUT', `/api/products/${id}`, updates);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      toast({ title: "Product updated successfully" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update product", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Mutation for deleting products
+  const deleteProductMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest('DELETE', `/api/products/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      toast({ title: "Product deleted successfully" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to delete product", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleEdit = (id: string) => {
+    // TODO: Open edit modal/form
+    console.log('Edit product:', id);
+  };
+  
+  const handleToggleStatus = (id: string) => {
+    const product = products.find(p => p.id === id);
+    if (product) {
+      updateProductMutation.mutate({ id, updates: { active: !product.active } });
+    }
+  };
+  
+  const handleDelete = (id: string) => {
+    if (confirm('Are you sure you want to delete this product?')) {
+      deleteProductMutation.mutate(id);
+    }
+  };
+  
+  const handleAddProduct = () => {
+    // TODO: Open add product modal/form
+    console.log('Add new product');
+  };
 
   return (
     <div className="space-y-6" data-testid="page-products">
@@ -85,7 +101,15 @@ export default function Products() {
         </div>
       </div>
 
-      {filteredProducts.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-12">
+          <div className="text-muted-foreground">Loading products...</div>
+        </div>
+      ) : error ? (
+        <div className="text-center py-12">
+          <div className="text-destructive">Failed to load products</div>
+        </div>
+      ) : filteredProducts.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-muted-foreground">
             {searchTerm ? "No products found matching your search." : "No products yet."}

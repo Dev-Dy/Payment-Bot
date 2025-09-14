@@ -4,77 +4,75 @@ import BotMessageBubble from "@/components/BotMessageBubble";
 import { DollarSign, ShoppingCart, Users, TrendingUp, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
+import type { Order, BotInteraction } from "@shared/schema";
 
 export default function Dashboard() {
-  // todo: remove mock functionality
+  // Fetch real data from APIs
+  const { data: orders = [] } = useQuery<Order[]>({
+    queryKey: ['/api/orders'],
+  });
+
+  const { data: botInteractions = [] } = useQuery<BotInteraction[]>({
+    queryKey: ['/api/bot-interactions'],
+    select: (data) => data.slice(0, 10), // Limit to recent interactions
+  });
+
+  // Calculate real statistics
+  const totalRevenue = orders
+    .filter(o => o.status === 'paid')
+    .reduce((sum, order) => sum + parseFloat(order.total_amount), 0);
+
+  const todayOrders = orders.filter(o => {
+    const today = new Date();
+    const orderDate = new Date(o.created_at);
+    return orderDate.toDateString() === today.toDateString();
+  }).length;
+
+  const pendingOrders = orders.filter(o => o.status === 'pending').length;
+  
+  const uniqueUsers = new Set(orders.map(o => o.telegram_user_id)).size;
+
   const mockStats = [
     {
       title: "Total Revenue",
-      value: "$45,231.89",
-      change: "+20.1% from last month",
+      value: `$${totalRevenue.toFixed(2)}`,
+      change: `${orders.length} total orders`,
       changeType: "positive" as const,
       icon: DollarSign
     },
     {
-      title: "Orders",
-      value: "156",
-      change: "+8 new today",
+      title: "Orders Today",
+      value: todayOrders.toString(),
+      change: `${pendingOrders} pending`,
       changeType: "positive" as const,
       icon: ShoppingCart
     },
     {
       title: "Active Users",
-      value: "1,234",
-      change: "+12% this week",
+      value: uniqueUsers.toString(),
+      change: "Unique customers",
       changeType: "positive" as const,
       icon: Users
     },
     {
-      title: "Conversion Rate",
-      value: "12.3%",
-      change: "+2.1% improvement",
+      title: "Total Orders",
+      value: orders.length.toString(),
+      change: "All time",
       changeType: "positive" as const,
       icon: TrendingUp
     }
   ];
 
-  const recentOrders = [
-    {
-      id: "ord_1234567890",
-      telegramUserId: "123456789",
-      telegramUsername: "alice_smith",
-      productName: "Premium Course",
-      quantity: 1,
-      totalAmount: "299.00",
-      currency: "USD",
-      status: "paid" as const,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: "ord_0987654321",
-      telegramUserId: "987654321",
-      telegramUsername: "bob_jones",
-      productName: "E-book Bundle",
-      quantity: 2,
-      totalAmount: "99.98",
-      currency: "USD",
-      status: "pending" as const,
-      createdAt: new Date(Date.now() - 3600000).toISOString(),
-    }
-  ];
+  const recentOrders = orders
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5);
 
-  const recentMessages = [
-    {
-      message: "New user started the bot! 🎉",
-      isBot: true,
-      timestamp: new Date(Date.now() - 300000).toISOString(),
-    },
-    {
-      message: "Hi! I want to buy a course",
-      isBot: false,
-      timestamp: new Date(Date.now() - 240000).toISOString(),
-    }
-  ];
+  const recentMessages = botInteractions.map(interaction => ({
+    message: interaction.message_content || 'Bot interaction',
+    isBot: interaction.message_type === 'command',
+    timestamp: interaction.created_at,
+  }));
 
   const handleViewOrder = (id: string) => console.log('View order:', id);
   const handleRefund = (id: string) => console.log('Refund order:', id);
@@ -104,14 +102,20 @@ export default function Dashboard() {
             <CardTitle>Recent Orders</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {recentOrders.map(order => (
-              <OrderCard
-                key={order.id}
-                {...order}
-                onViewDetails={handleViewOrder}
-                onRefund={handleRefund}
-              />
-            ))}
+            {recentOrders.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                No orders yet
+              </div>
+            ) : (
+              recentOrders.map(order => (
+                <OrderCard
+                  key={order.id}
+                  {...order}
+                  onViewDetails={handleViewOrder}
+                  onRefund={handleRefund}
+                />
+              ))
+            )}
           </CardContent>
         </Card>
 
@@ -122,13 +126,19 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4 max-h-[400px] overflow-y-auto">
-              {recentMessages.map((msg, index) => (
-                <BotMessageBubble
-                  key={index}
-                  {...msg}
-                  onButtonClick={handleButtonClick}
-                />
-              ))}
+              {recentMessages.length === 0 ? (
+                <div className="text-center py-4 text-muted-foreground">
+                  No bot activity yet
+                </div>
+              ) : (
+                recentMessages.map((msg, index) => (
+                  <BotMessageBubble
+                    key={index}
+                    {...msg}
+                    onButtonClick={handleButtonClick}
+                  />
+                ))
+              )}
             </div>
           </CardContent>
         </Card>

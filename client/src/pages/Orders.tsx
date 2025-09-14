@@ -5,71 +5,19 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Filter } from "lucide-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { Order } from "@shared/schema";
 
 export default function Orders() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   
-  // todo: remove mock functionality
-  const mockOrders = [
-    {
-      id: "ord_1234567890abcdef",
-      telegramUserId: "123456789",
-      telegramUsername: "alice_cooper",
-      productName: "Premium Full-Stack Course",
-      quantity: 1,
-      totalAmount: "299.00",
-      currency: "USD",
-      status: "paid" as const,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: "ord_0987654321fedcba",
-      telegramUserId: "987654321",
-      telegramUsername: "bob_dylan",
-      productName: "JavaScript E-book Bundle",
-      quantity: 2,
-      totalAmount: "99.98",
-      currency: "USD",
-      status: "pending" as const,
-      createdAt: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      id: "ord_abcdef1234567890",
-      telegramUserId: "456789123",
-      telegramUsername: undefined,
-      productName: "React Video Series",
-      quantity: 1,
-      totalAmount: "79.99",
-      currency: "USD",
-      status: "cancelled" as const,
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-    {
-      id: "ord_fedcba0987654321",
-      telegramUserId: "789123456",
-      telegramUsername: "charlie_parker",
-      productName: "One-on-One Mentorship",
-      quantity: 1,
-      totalAmount: "150.00",
-      currency: "USD",
-      status: "refunded" as const,
-      createdAt: new Date(Date.now() - 172800000).toISOString(),
-    },
-    {
-      id: "ord_1111222233334444",
-      telegramUserId: "111222333",
-      telegramUsername: "diana_ross",
-      productName: "Premium Full-Stack Course",
-      quantity: 1,
-      totalAmount: "299.00",
-      currency: "USD",
-      status: "paid" as const,
-      createdAt: new Date(Date.now() - 259200000).toISOString(),
-    }
-  ];
+  // Fetch orders from API
+  const { data: orders = [], isLoading, error } = useQuery<Order[]>({
+    queryKey: ['/api/orders'],
+  });
 
-  const filteredOrders = mockOrders.filter(order => {
+  const filteredOrders = orders.filter(order => {
     const matchesSearch = 
       order.telegramUsername?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       order.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -95,7 +43,7 @@ export default function Orders() {
         <div className="flex items-center gap-2">
           <StatusBadge status="pending" />
           <span className="text-sm text-muted-foreground">
-            {mockOrders.filter(o => o.status === "pending").length} pending
+            {orders.filter(o => o.status === "pending").length} pending
           </span>
         </div>
       </div>
@@ -127,7 +75,15 @@ export default function Orders() {
         </Select>
       </div>
 
-      {filteredOrders.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-12">
+          <div className="text-muted-foreground">Loading orders...</div>
+        </div>
+      ) : error ? (
+        <div className="text-center py-12">
+          <div className="text-destructive">Failed to load orders</div>
+        </div>
+      ) : filteredOrders.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-muted-foreground">
             {searchTerm || statusFilter !== "all" 
