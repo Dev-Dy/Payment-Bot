@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, integer, decimal, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -86,3 +86,15 @@ export const MessageType = {
   CALLBACK: "callback", 
   TEXT: "text",
 } as const;
+
+// Relations
+export const productsRelations = relations(products, ({ many }) => ({
+  orders: many(orders),
+}));
+
+export const ordersRelations = relations(orders, ({ one }) => ({
+  product: one(products, {
+    fields: [orders.product_id],
+    references: [products.id],
+  }),
+}));
