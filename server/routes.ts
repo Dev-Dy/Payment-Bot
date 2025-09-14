@@ -3,18 +3,29 @@ import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
 import { insertProductSchema, insertOrderSchema, OrderStatus } from "@shared/schema";
+import { telegramBot } from "./telegramBot";
 import { z } from "zod";
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error('Missing required Stripe secret: STRIPE_SECRET_KEY');
 }
 
+// SECURITY: Enforce STRIPE_WEBHOOK_SECRET in production environments
+const isProduction = process.env.NODE_ENV === 'production' || process.env.REPL_ENVIRONMENT === 'production' || process.env.APP_URL?.includes('replit.app');
+
 if (!process.env.STRIPE_WEBHOOK_SECRET) {
-  console.warn('WARNING: STRIPE_WEBHOOK_SECRET not found. Webhook signature verification will be skipped in development.');
+  if (isProduction) {
+    // CRITICAL: Fail startup in production if webhook secret is missing
+    console.error('CRITICAL ERROR: STRIPE_WEBHOOK_SECRET must be set in production environment');
+    console.error('This is required for webhook security and prevents unauthorized access');
+    process.exit(1);
+  } else {
+    console.warn('WARNING: STRIPE_WEBHOOK_SECRET not found. Webhook signature verification will be skipped in development.');
+  }
 }
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-08-27.basil",
+  apiVersion: "2024-12-18.acacia",
 });
 
 // Validation schemas
@@ -32,6 +43,26 @@ setInterval(() => {
   processedEvents.clear();
 }, 60 * 60 * 1000);
 
+// SECURITY: URL validation for webhook endpoints
+function isValidWebhookUrl(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url);
+    // Only allow HTTPS URLs (except localhost for development)
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.hostname !== 'localhost') {
+      return false;
+    }
+    // Block private/internal IP ranges
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname === '127.0.0.1' || hostname === '::1' || hostname.startsWith('192.168.') || 
+        hostname.startsWith('10.') || hostname.startsWith('172.16.') || hostname === 'metadata.google.internal') {
+      return parsedUrl.hostname === 'localhost'; // Only allow localhost explicitly
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Webhook event handlers
 async function handlePaymentSucceeded(paymentIntent: Stripe.PaymentIntent): Promise<void> {
   try {
@@ -41,13 +72,26 @@ async function handlePaymentSucceeded(paymentIntent: Stripe.PaymentIntent): Prom
       // Mark order as paid
       await storage.updateOrderStatus(order.id, OrderStatus.PAID);
       
+      // Send Telegram notification for successful payment
+      const successMessage = `🎉 <b>Payment Successful!</b>
+
+✅ Your payment for <b>${order.product.name}</b> has been processed successfully.
+
+💰 <b>Amount:</b> ${order.currency} ${order.total_amount}
+🆔 <b>Order ID:</b> ${order.id}
+📅 <b>Date:</b> ${new Date().toLocaleString()}
+
+Thank you for your purchase! 🛍️`;
+      
+      await telegramBot.sendMessage(parseInt(order.telegram_user_id), successMessage);
+      
       // Log bot interaction for successful payment
       await storage.logBotInteraction({
         telegram_user_id: order.telegram_user_id,
         telegram_username: order.telegram_username,
         message_type: "payment_success",
         message_content: `Payment successful for ${order.product.name}`,
-        response_sent: "Payment confirmed",
+        response_sent: "Payment success notification sent",
       });
 
       console.log(`Payment succeeded for order ${order.id} (Amount: ${paymentIntent.amount_received / 100} ${paymentIntent.currency.toUpperCase()})`);
@@ -66,13 +110,25 @@ async function handlePaymentFailed(paymentIntent: Stripe.PaymentIntent): Promise
     if (order) {
       await storage.updateOrderStatus(order.id, OrderStatus.CANCELLED);
       
+      // Send Telegram notification for failed payment
+      const failureMessage = `❌ <b>Payment Failed</b>
+
+💳 Unfortunately, your payment for <b>${order.product.name}</b> could not be processed.
+
+💰 <b>Amount:</b> ${order.currency} ${order.total_amount}
+🆔 <b>Order ID:</b> ${order.id}
+
+Please try again or contact support if the issue persists.`;
+      
+      await telegramBot.sendMessage(parseInt(order.telegram_user_id), failureMessage);
+      
       // Log bot interaction for failed payment
       await storage.logBotInteraction({
         telegram_user_id: order.telegram_user_id,
         telegram_username: order.telegram_username,
         message_type: "payment_failed",
         message_content: `Payment failed for ${order.product.name}`,
-        response_sent: "Payment could not be processed",
+        response_sent: "Payment failure notification sent",
       });
 
       console.log(`Payment failed for order ${order.id}`);
@@ -91,13 +147,25 @@ async function handlePaymentCanceled(paymentIntent: Stripe.PaymentIntent): Promi
     if (order) {
       await storage.updateOrderStatus(order.id, OrderStatus.CANCELLED);
       
+      // Send Telegram notification for canceled payment
+      const cancelMessage = `⏹️ <b>Payment Canceled</b>
+
+🚫 Your payment for <b>${order.product.name}</b> was canceled.
+
+💰 <b>Amount:</b> ${order.currency} ${order.total_amount}
+🆔 <b>Order ID:</b> ${order.id}
+
+You can restart the payment process anytime by visiting the product again.`;
+      
+      await telegramBot.sendMessage(parseInt(order.telegram_user_id), cancelMessage);
+      
       // Log bot interaction for canceled payment
       await storage.logBotInteraction({
         telegram_user_id: order.telegram_user_id,
         telegram_username: order.telegram_username,
         message_type: "payment_canceled",
         message_content: `Payment canceled for ${order.product.name}`,
-        response_sent: "Payment was canceled",
+        response_sent: "Payment cancellation notification sent",
       });
 
       console.log(`Payment canceled for order ${order.id}`);
@@ -118,13 +186,26 @@ async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
       if (order) {
         await storage.updateOrderStatus(order.id, OrderStatus.REFUNDED);
         
+        // Send Telegram notification for refund
+        const refundMessage = `🔄 <b>Refund Processed</b>
+
+✅ Your refund for <b>${order.product.name}</b> has been processed successfully.
+
+💰 <b>Refunded Amount:</b> ${charge.currency.toUpperCase()} ${(charge.amount_refunded / 100).toFixed(2)}
+🆔 <b>Order ID:</b> ${order.id}
+📅 <b>Date:</b> ${new Date().toLocaleString()}
+
+The refund will appear in your account within 5-10 business days.`;
+        
+        await telegramBot.sendMessage(parseInt(order.telegram_user_id), refundMessage);
+        
         // Log bot interaction for refund
         await storage.logBotInteraction({
           telegram_user_id: order.telegram_user_id,
           telegram_username: order.telegram_username,
           message_type: "payment_refunded",
           message_content: `Refund processed for ${order.product.name}`,
-          response_sent: "Your payment has been refunded",
+          response_sent: "Refund notification sent",
         });
 
         console.log(`Charge refunded for order ${order.id} (Amount: ${charge.amount_refunded / 100} ${charge.currency.toUpperCase()})`);
@@ -358,6 +439,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ received: true, eventId: event.id });
   });
 
+  // SECURITY: Public order endpoint for checkout - sanitized response without PII
+  app.get("/api/orders/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const order = await storage.getOrderById(id);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      
+      // SECURITY: Sanitize response - remove PII data for public checkout access
+      const publicOrder = {
+        id: order.id,
+        product_id: order.product_id,
+        quantity: order.quantity,
+        total_amount: order.total_amount,
+        currency: order.currency,
+        status: order.status,
+        created_at: order.created_at,
+        product: {
+          id: order.product.id,
+          name: order.product.name,
+          description: order.product.description,
+          price: order.product.price,
+          currency: order.product.currency,
+          image_url: order.product.image_url,
+        }
+        // Removed: telegram_user_id, telegram_username, stripe_payment_intent_id
+      };
+      
+      res.json(publicOrder);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Create payment intent for existing order (for checkout page)
+  app.post("/api/orders/:id/payment-intent", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const order = await storage.getOrderById(id);
+      
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      if (order.status !== OrderStatus.PENDING) {
+        return res.status(400).json({ error: "Order cannot be paid" });
+      }
+
+      // If payment intent already exists, retrieve it
+      if (order.stripe_payment_intent_id) {
+        const paymentIntent = await stripe.paymentIntents.retrieve(order.stripe_payment_intent_id);
+        return res.json({ 
+          clientSecret: paymentIntent.client_secret,
+          orderId: order.id 
+        });
+      }
+
+      // Create new payment intent
+      const priceInCents = Math.round(parseFloat(order.total_amount) * 100);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: priceInCents,
+        currency: order.currency.toLowerCase(),
+        automatic_payment_methods: {
+          enabled: true,
+        },
+        metadata: {
+          orderId: order.id,
+          telegramUserId: order.telegram_user_id,
+          productId: order.product_id,
+          productName: order.product.name,
+        },
+      });
+
+      // Update order with payment intent ID
+      await storage.updateOrderPaymentIntentId(order.id, paymentIntent.id);
+
+      res.json({ 
+        clientSecret: paymentIntent.client_secret,
+        orderId: order.id 
+      });
+    } catch (error: any) {
+      console.error("Payment intent creation error:", error);
+      res.status(500).json({ error: "Failed to create payment intent" });
+    }
+  });
+
   // Bot interactions
   app.get("/api/bot-interactions", async (req, res) => {
     try {
@@ -365,6 +533,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const interactions = await storage.getRecentBotInteractions(limit);
       res.json(interactions);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Telegram webhook endpoint with security verification
+  app.post("/api/telegram-webhook", async (req, res) => {
+    try {
+      // Verify webhook secret token if configured
+      const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET;
+      if (secretToken) {
+        const providedToken = req.headers['x-telegram-bot-api-secret-token'];
+        if (!providedToken || providedToken !== secretToken) {
+          console.warn('Unauthorized Telegram webhook request');
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+      }
+
+      await telegramBot.handleUpdate(req.body);
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Error handling Telegram webhook:", error);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
+  // SECURITY: Webhook management endpoint - requires admin authentication
+  app.post("/api/set-telegram-webhook", async (req, res) => {
+    try {
+      // SECURITY: Require admin API key for webhook management
+      const adminApiKey = req.headers['x-admin-api-key'];
+      if (!process.env.ADMIN_API_KEY || adminApiKey !== process.env.ADMIN_API_KEY) {
+        console.warn('Unauthorized webhook management attempt:', req.ip);
+        return res.status(401).json({ error: "Unauthorized - Admin API key required" });
+      }
+
+      const { url } = req.body;
+      
+      // SECURITY: Validate webhook URL format and domain
+      if (url && !isValidWebhookUrl(url)) {
+        return res.status(400).json({ error: "Invalid webhook URL format" });
+      }
+      
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+      const webhookUrl = url || `${baseUrl}/api/telegram-webhook`;
+      
+      const webhookPayload: any = {
+        url: webhookUrl,
+      };
+
+      // Add secret token if configured
+      if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+        webhookPayload.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
+      }
+
+      const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(webhookPayload),
+      });
+
+      const result = await response.json();
+      
+      if (result.ok) {
+        console.log(`Webhook set by admin to: ${webhookUrl}`);
+        res.json({ success: true, webhook_url: webhookUrl, secret_configured: !!process.env.TELEGRAM_WEBHOOK_SECRET });
+      } else {
+        res.status(400).json({ error: result.description });
+      }
+    } catch (error: any) {
+      console.error("Error setting webhook:", error);
       res.status(500).json({ error: error.message });
     }
   });

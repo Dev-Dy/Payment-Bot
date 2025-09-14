@@ -24,6 +24,7 @@ export interface IStorage {
 
   // Order operations
   getOrder(id: string): Promise<OrderWithProduct | undefined>;
+  getOrderById(id: string): Promise<OrderWithProduct | undefined>;
   getOrderByPaymentIntentId(paymentIntentId: string): Promise<OrderWithProduct | undefined>;
   getOrdersByTelegramUserId(telegramUserId: string): Promise<OrderWithProduct[]>;
   getAllOrders(): Promise<OrderWithProduct[]>;
@@ -84,6 +85,11 @@ export class DatabaseStorage implements IStorage {
       ...result.orders,
       product: result.products!
     };
+  }
+
+  async getOrderById(id: string): Promise<OrderWithProduct | undefined> {
+    // Alias for getOrder - for consistency with API naming
+    return this.getOrder(id);
   }
 
   async getAllOrders(): Promise<OrderWithProduct[]> {

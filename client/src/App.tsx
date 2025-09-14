@@ -12,6 +12,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import Dashboard from "@/pages/Dashboard";
 import Products from "@/pages/Products";
 import Orders from "@/pages/Orders";
+import Checkout from "@/pages/Checkout";
 import NotFound from "@/pages/NotFound";
 
 function Router() {
@@ -20,6 +21,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/orders" component={Orders} />
       <Route path="/products" component={Products} />
+      <Route path="/checkout" component={Checkout} />
       <Route path="/bot-chat">
         <div className="flex items-center justify-center h-[60vh] text-muted-foreground">
           Bot Chat interface coming soon...
